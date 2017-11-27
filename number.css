@@ -1,0 +1,15 @@
+number {
+  display: inline-block;
+  color: black;
+}
+
+number.standout {
+  color: slateblue;
+}
+
+numberName {
+  font-size: 75%;
+  font-style: italic;
+  vertical-align: sub;
+}
+

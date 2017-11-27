@@ -1,0 +1,205 @@
+<html>
+  <head>
+    <meta charset="UTF-8">
+
+    <title>graphing scrubbing calculator</title>
+
+    <!-- Imports for OMeta -->
+    <script src="lib/ometa-js/lib.js"></script>
+    <script src="lib/ometa-js/ometa-base.js"></script>
+    <script src="lib/ometa-js/bs-js-compiler.js"></script>
+    <script src="lib/ometa-js/bs-ometa-compiler.js"></script>
+    <script src="lib/ometa-js/bs-ometa-optimizer.js"></script>
+    <script src="lib/ometa-js/bs-ometa-js-compiler.js"></script>
+
+    <!-- Other imports that are not specific to this project -->
+    <script src="lib/meh.js"></script>
+    <script src="lib/objectUtils.js"></script>
+    <script src="lib/browser.js"></script>
+    <script src="lib/drag.js"></script>
+    <script src="lib/customElement.js"></script>
+    <script src="lib/editor.js"></script>
+
+    <script src=number-slider.js></script>
+    <!-- <script src="number-dial.js"></script> -->
+    <link href="number.css" rel="stylesheet"></style>
+
+    <script src="graph.js"></script>
+    <script src="calc.js"></script>
+    <link href="calc.css" rel="stylesheet"></style>
+
+    <style>
+
+body {
+  font-family: "Optima", "Helvetica", "Arial", sans-serif;
+  font-size: 18px;
+  padding: 8pt;
+}
+
+    </style>
+  </head>
+  <body>
+    <script id="parser" type="application/ometa-js">
+
+function numFracDigits(s) {
+  var decimalPointIdx = s.indexOf('.')
+  return decimalPointIdx < 0 ?  0 : s.length - decimalPointIdx - 1
+}
+
+ometa T {
+  tokens    = token*,
+  token     = important | word,
+  important = number | operator | paren | funName,
+  number    = '-'?:isNeg '$'?:isMoney iNumber:v name?:n          -> ['number',
+                                                                     isNeg ? -parseFloat(v) : parseFloat(v),
+                                                                     numFracDigits(v),
+                                                                     isMoney,
+                                                                     n]
+            | '@' name:n                                         -> ['number', undefined, 0, false, n],
+  iNumber   = <digit+ frac? exp? | Infinity | NaN>:n -> n,
+  frac      = '.' digit+,
+  exp       = ('e' | 'E') ('+' | '-')? digit+,
+  Infinity  = seq('Infinity'),
+  NaN       = seq('NaN'),
+  name      = <letter (letter | digit)*>,
+  operator  = <'+' | '-' | '*' | '/' | '%' | '^'>:o              -> [o],
+  paren     = <'(' | ')'>:p                                      -> [p],
+  funName   = name:n &'('                                        -> ['funName', n],
+  wordChar  = ~important ~space char,
+  word      = <space+ | wordChar+>:w                             -> ['word', w]
+}
+
+ometa F {
+  func     = expr:e token('ans')? word* end     -> eval('(function() { return ' + e + ' })'),
+  expr     = addExpr,
+  addExpr  = addExpr:x "+" mulExpr:y            -> (x + '+' + y)
+           | addExpr:x "-" mulExpr:y            -> (x + '-' + y)
+           | mulExpr,
+  mulExpr  = mulExpr:x "*" expExpr:y            -> (x + '*' + y)
+           | mulExpr:x "/" expExpr:y            -> (x + '/' + y)
+           | mulExpr:x "%" expExpr:y            -> (x + '%' + y)
+           | expExpr,
+  expExpr  = expExpr:x "^" unaExpr:y            -> ('Math.pow(' + x + ', ' + y + ')')
+           | unaExpr,
+  unaExpr  = token('funName'):n "(" expr:x ")"  -> (Math[n] instanceof Function && Math[n].length == 1 ?
+                                                      'Math.' + n + '(' + x + ')' :
+                                                      NaN)
+           | priExpr,
+  priExpr  = "(" expr:x ")"                     -> ('(' + x + ')')
+           | token('number') {self.nIdx++}:idx  -> ('arguments[' + idx + ']'),
+  space    = word,
+  seq :x   = [exactly(x) anything?:v anything*] -> v,
+  word     = ['word' anything]
+}
+F.nIdx = 0
+
+    </script>
+    <script>
+
+// Compile the grammars above
+(function() {
+  var parserSource = document.getElementById('parser').innerHTML
+  var tree = BSOMetaJSParser.matchAll(parserSource, 'topLevel')
+  var compiled = BSOMetaJSTranslator.match(tree, 'trans')
+  eval(compiled)
+})()
+
+meh.withModulesDo(function(calc, browser) {
+
+  browser.subscribe('cursor')
+
+  var calculator = calc.create()
+  document.body.appendChild(calculator)
+
+  function processLine(text) {
+    text = text.replace(/\u00D7/g, '*').replace(/\u00F7/g, '/')
+    var tokens = T.matchAll(text, 'tokens')
+    var func
+    try {
+      func = F.matchAll(tokens, 'func')
+    } catch (e) {}
+
+    var line = calculator.addLine()
+    tokens.forEach(function(token) {
+      for (var idx = 0; idx < token.length; idx++)
+        if (typeof token[idx] == 'string')
+          token[idx] = token[idx].replace(/\*/g, '\u00D7').replace(/\//g, '\u00F7')
+      switch(token[0]) {
+	case 'word':
+	  line.addText(token[1])
+	  break
+	case 'number':
+	  line.addNumber(token[1], token[2], token[3], token[4])
+	  break
+	case 'funName':
+	  line.addMeaningfulText(token[1])
+	  break
+	default:
+	  line.addMeaningfulText(token[0])
+       }
+    })
+    if (tokens.length == 0)
+      line.appendChild(document.createElement('br'))
+    line.setFormula(func)
+  }
+
+  calculator.setText = function(text) {
+    calculator.editor.setText(text)
+    calculator.oninput()
+  }
+
+  calculator.oninput = function() {
+
+    var text = calculator.getText()
+    var pos = calculator.getCursorPos()
+
+/*
+    browser.log('cursor', '---------------------------------------------------')
+    browser.log('cursor', 'pos', pos)
+    browser.log('cursor', 'text', '[[' + text.substr(0, pos) + '|' + text.substr(pos) + ']]]')
+    browser.log(
+      'cursor',
+      'before',
+      browser.prettyPrintNode(
+        calculator.firstChild,
+        document.getSelection().getRangeAt(0).endContainer,
+        document.getSelection().getRangeAt(0).endOffset))
+*/
+
+    calculator.clear()
+    text.split('\n').forEach(function(line) {
+      processLine(line)
+    })
+    calculator.setCursorPos(pos)
+
+/*
+    browser.log(
+      'cursor',
+      'after ',
+      browser.prettyPrintNode(
+        calculator.firstChild,
+        document.getSelection().getRangeAt(0).endContainer,
+        document.getSelection().getRangeAt(0).endOffset))
+    pos = calculator.getCursorPos()
+    browser.log('cursor', '[[[' + text.substr(0, pos) + '|' + text.substr(pos) + ']]]')
+    browser.log('cursor', 'pos', pos)
+    browser.log('cursor', '---------------------------------------------------')
+*/
+  }
+
+  calculator.setText(
+    'To scrub, place the mouse over a number, then move the mouse left or right while holding down the ALT ' +
+    'or Option key.\n' +
+    'To graph, scrub while pressing SHIFT.\n\n' +
+    '3 apples * $0.47 + 8 bananas * $0.20\n' +
+    'cos(0.00)\n' +
+    'sin(0.00x) / 0.00x\n')
+
+  calculator.setCursorPos(calculator.editor.getText().length)
+  calculator.focus()
+})
+
+    </script>
+  </body>
+</html>
+

@@ -1,0 +1,25 @@
+calculator > editor {
+  display: block;
+  min-height: 300px;
+  outline: none;
+  padding: 5px;
+}
+
+calculatorLine {
+  display: block;
+  margin-bottom: 10px;
+}
+
+calculatorLine:after {
+  content: attr(value);
+  color: maroon;
+}
+
+calculatorText {
+  color: #999;
+}
+
+calculatorMeaningfulText {
+  color: maroon;
+}
+
